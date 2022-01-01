@@ -4,6 +4,7 @@ import (
 	"blcokChain/utils"
 	"crypto/sha256"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 )
@@ -22,10 +23,11 @@ type Block struct {
 	Nonce      uint64 // produce in mining procedure
 	PrevHash   []byte // the hash of prev block
 	Hash       []byte // it shouldn't be here. Just for demo
-	Data       []byte // use byte to save data
+	//Data       []byte // use byte to save data
+	Txs []*Transaction
 }
 
-func NewBlock(data string, prevBlockHash []byte) *Block {
+func NewBlock(txs []*Transaction, prevBlockHash []byte) *Block {
 	block := Block{
 		Version:    00,
 		MerkelRoot: []byte{},
@@ -33,9 +35,12 @@ func NewBlock(data string, prevBlockHash []byte) *Block {
 		Difficulty: 0, // just for demo
 		Nonce:      0, // It will be filled after mining
 		PrevHash:   prevBlockHash,
-		Hash:       []byte{},     // It will be filled after calculation
-		Data:       []byte(data), // byte stream
+		Hash:       []byte{}, // It will be filled after calculation
+		//Data:       []byte(data), // byte stream
+		Txs: txs,
 	}
+	block.MerkelRoot = block.getMerkelRoot()
+
 	if len(prevBlockHash) != 0 { // common block need to mine
 		hash, nonce := block.mining()
 		block.Hash = hash
@@ -47,9 +52,31 @@ func NewBlock(data string, prevBlockHash []byte) *Block {
 	return &block
 }
 
+// getMerkelRoot: get MerkelRoot from txId(simply concat the transactionId to get bytes to hash)
+func (b *Block) getMerkelRoot() []byte {
+	txIdBytes := make([]byte, 0)
+	for _, tx := range b.Txs {
+		txIdBytes = append(txIdBytes, tx.TXId...)
+	}
+	hash := sha256.Sum256(txIdBytes)
+	return hash[:]
+}
+
+// getBlockInfoToCalculateHash: when calculate hash, it will not consider real transactions, only MerkelRoot
+func (b *Block) getBlockInfoToCalculateHash() *Block {
+	afterCopy := &Block{}
+	err := utils.DeepCopy(afterCopy, *b)
+	if err != nil {
+		log.Fatal(err)
+	}
+	afterCopy.Txs = nil // transactions will not be considered
+	return afterCopy
+}
+
 // getBlockHash: calculate and return the block's hash, only used in mining and genesisBlock
 func (b *Block) getBlockHash() []byte {
-	blockInfo := []byte(fmt.Sprintf("%v", *b))
+	waitForHash := b.getBlockInfoToCalculateHash()
+	blockInfo := []byte(fmt.Sprintf("%v", *waitForHash))
 	hash := sha256.Sum256(blockInfo)
 	return hash[:]
 }

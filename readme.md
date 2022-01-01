@@ -13,6 +13,7 @@
     - mining process
     - db to save block-chain(json file)
   - Step2: use transaction to replace data
+  - Step3: use Cryptography to replace name in address
 ## Stage 1: 
 > A simple block-chain with several blocks which contain some data.
 ### Notice && Techniques
@@ -34,3 +35,11 @@
 - go.mod
   - reason: `go test` or  `go run *.go` need an entry
   - usage: `go mod init blcokChain`
+## Stage 2:
+> A block-chain with transaction in the block. Still no Cryptography
+### Notice && Techniques
+- use UTXO to wrap output
+  - the index of output is hard to get
+  - maybe the best way to represent UTXO is to wrap output
+- use address to imitate public key and private key
+- use `handler.go` to wrap operations in block-chain.
