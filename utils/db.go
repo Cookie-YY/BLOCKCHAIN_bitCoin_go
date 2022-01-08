@@ -1,8 +1,6 @@
 package utils
 
 import (
-	"bytes"
-	"encoding/json"
 	"io/ioutil"
 	"os"
 )
@@ -14,13 +12,13 @@ type DB interface {
 }
 
 type JsonDB struct {
-	path string
+	path       string
+	serializer Serializer
 	DB
 }
 
-func GetJsonDB() *JsonDB {
-	path := "block-chain.json"
-	return &JsonDB{path: path}
+func GetJsonDB(path string, serializer Serializer) *JsonDB {
+	return &JsonDB{path: path, serializer: serializer}
 }
 
 func (jdb *JsonDB) IsExist() bool {
@@ -43,18 +41,17 @@ func (jdb *JsonDB) ReadFromDB(contentStruct interface{}) error {
 		return err
 	}
 	// parse content
-	content = bytes.TrimPrefix(content, []byte("\xef\xbb\xbf"))
-	err = json.Unmarshal(content, contentStruct)
+	err = jdb.serializer.DeSerialize(content, contentStruct)
 	if err != nil {
 		return err
 	}
-
-	return nil
+	// close file
+	return f.Close()
 }
 
 func (jdb *JsonDB) WriteToDB(content interface{}) error {
 	// format content
-	result, err := json.MarshalIndent(content, "", "    ")
+	result, err := jdb.serializer.Serialize(content)
 	if err != nil {
 		return err
 	}

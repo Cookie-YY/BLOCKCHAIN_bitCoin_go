@@ -54,3 +54,11 @@ func Str2Float(s string) (float64, error) {
 	}
 	return res, nil
 }
+
+func Str2Int(s string) (int64, error) {
+	res, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return res, nil
+}

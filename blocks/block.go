@@ -2,10 +2,11 @@ package blocks
 
 import (
 	"blcokChain/utils"
+	. "blcokChain/utils/consts"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 )
 
@@ -14,10 +15,13 @@ import (
 //   - Hash: we add the hash of current block in the struct
 //  		while it should be calculated by the node in block-chain every time
 //   - Difficulty: the ceil hash value should be calculated by difficulty. just for demo here
-//   - Data: It will be replaced by transaction
+//   - Data: It will be replaced by transaction(Used in Stage2. Stage3 has already replaced it with txs)
+//   - Txs: Transactions of this block.
+//          When hash the block, it should not be included.
+//          get the Txs through miner's pack
 type Block struct {
 	Version    uint64 // 00 for main-chain 01 for test-chain
-	MerkelRoot []byte
+	MerkelRoot []byte // to represent all the txs
 	TimeStamp  uint64
 	Difficulty uint64 // to calculate the ceil hash value: no bigger than this value
 	Nonce      uint64 // produce in mining procedure
@@ -27,7 +31,14 @@ type Block struct {
 	Txs []*Transaction
 }
 
-func NewBlock(txs []*Transaction, prevBlockHash []byte) *Block {
+// NewBlock : get a block(it could be GenesisBlock or commonBlock)
+//  - GenesisBlock: It doesn't need to be mined. It gets its hash though simple calculation
+//  - CommonBlock: It should be mined. It gets its hash though find the proper nonce.
+//  NOTICE:
+// 		block-chain: it needs block-chain: when verify txs, it needs to scan the whole block-chain, when creating a GenesisBlock, it could pass nil
+//      prevBlockHash: the hash of prev block may not be the tailHash of the block-chain.
+//     		The block need to choose the tailHash represented the longest chain as prevHash. And replace that tailHash
+func NewBlock(txs []*Transaction, prevBlockHash []byte, bc *BlockChain) *Block {
 	block := Block{
 		Version:    00,
 		MerkelRoot: []byte{},
@@ -37,19 +48,46 @@ func NewBlock(txs []*Transaction, prevBlockHash []byte) *Block {
 		PrevHash:   prevBlockHash,
 		Hash:       []byte{}, // It will be filled after calculation
 		//Data:       []byte(data), // byte stream
-		Txs: txs,
+		//Txs: txs,
 	}
-	block.MerkelRoot = block.getMerkelRoot()
-
 	if len(prevBlockHash) != 0 { // common block need to mine
+		block.Txs = block.packTxs(txs, bc) // TODO: 打包交易和挖矿的顺序
+		if len(block.Txs) <= 1 {           // no block if only coinBaseTX
+			return nil
+		}
 		hash, nonce := block.mining()
 		block.Hash = hash
 		block.Nonce = nonce
 	} else { // prevBlockHash == nil -> no prev block -> the first block doesn't need to mine
+		block.Txs = txs
 		block.Hash = block.getBlockHash()
 	}
+	block.MerkelRoot = block.getMerkelRoot()
 
 	return &block
+}
+
+// packTxs : package the txs in the txs pool
+//   1. chose the highest tx fee of all the txs(we have not considered the fee for now)
+//   2. verify the sig of each tx.
+//   TODO: 3. when packing txs, it needs to modify the uxtos' pool in block-chain.
+func (b *Block) packTxs(txs []*Transaction, bc *BlockChain) []*Transaction {
+	// FIXME: not all txs can be included in this block, makeTransactions in the same block may go wrong
+	verifiedTxs := b.verifyTxs(txs, bc)
+	return verifiedTxs
+}
+
+func (b *Block) verifyTxs(txs []*Transaction, bc *BlockChain) []*Transaction {
+	verifiedTxs := make([]*Transaction, 0)
+	for _, tx := range txs {
+		if tx.IsCoinBaseTX() || tx.Verify(bc) { // coinBaseTX doesn't need to verify
+			verifiedTxs = append(verifiedTxs, tx)
+		} else {
+			bytes, _ := json.Marshal(tx)
+			fmt.Printf(TXVerifyFailed, string(bytes))
+		}
+	}
+	return verifiedTxs
 }
 
 // getMerkelRoot: get MerkelRoot from txId(simply concat the transactionId to get bytes to hash)
@@ -62,14 +100,17 @@ func (b *Block) getMerkelRoot() []byte {
 	return hash[:]
 }
 
-// getBlockInfoToCalculateHash: when calculate hash, it will not consider real transactions, only MerkelRoot
+// getBlockInfoToCalculateHash: when calculate hash, it will not consider real transactions.
+//    Only consider MerkelRoot to represent all txs
 func (b *Block) getBlockInfoToCalculateHash() *Block {
+	// !! afterCopy := *b   doesn't work.
+	// there is slice in the block struct. when modify the slice of copy the original could also be modified
 	afterCopy := &Block{}
-	err := utils.DeepCopy(afterCopy, *b)
+	err := utils.DeepCopy(afterCopy, b)
 	if err != nil {
 		log.Fatal(err)
 	}
-	afterCopy.Txs = nil // transactions will not be considered
+	afterCopy.Txs = nil
 	return afterCopy
 }
 
@@ -85,13 +126,12 @@ func (b *Block) getBlockHash() []byte {
 func (b *Block) mining() ([]byte, uint64) {
 	var nonce uint64 = 0
 	for {
-		b.Nonce = nonce
+		b.Nonce = nonce // trying to find a nonce ==> hash(block header + nonce) < ceilHash
 		currentHash := b.getBlockHash()
 		currentHashBigIntWrapper := utils.GetBigIntWrapperFromBytes(currentHash)
-		ceilHashBigIntWrapper := b.getCeilTargetHashBigIntWrapper()
+		ceilHashBigIntWrapper := b.getCeilHashBigIntWrapper()
 		if currentHashBigIntWrapper.SmallerThanAnotherBigIntWrapper(ceilHashBigIntWrapper) { // if current hash < ceil hash
-			fmt.Printf("** Mining Sucess! hash: %x, nonce: %v, ceil hash: %x ** \n",
-				currentHash, nonce, ceilHashBigIntWrapper.Value)
+			fmt.Printf(MineTip, currentHash, nonce, ceilHashBigIntWrapper.Value)
 			return b.getBlockHash(), nonce
 		} else {
 			nonce++
@@ -99,8 +139,8 @@ func (b *Block) mining() ([]byte, uint64) {
 	}
 }
 
-// getCeilTargetHash: it should be calculated by `difficulty`
-func (b *Block) getCeilTargetHashBigIntWrapper() *utils.BigIntWrapper {
-	targetStr := "00011" + strings.Repeat("0", 59)
-	return utils.GetBigIntWrapperFromStr(targetStr, 16)
+// getCeilHashBigIntWrapper: it should be calculated by `difficulty` for demo, it is a const
+// it can be changed to modify the difficulty
+func (b *Block) getCeilHashBigIntWrapper() *utils.BigIntWrapper {
+	return utils.GetBigIntWrapperFromStr(MineCeilHash, 16)
 }
